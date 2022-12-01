@@ -64,7 +64,7 @@ import kotlin.coroutines.CoroutineContext
 /**
  * Base `ViewModel` for activities that use `BottomSheet`.
  */
-internal abstract class BaseSheetViewModel<TransitionTargetType>(
+internal abstract class BaseSheetViewModel(
     application: Application,
     internal val config: PaymentSheet.Configuration?,
     internal val eventReporter: EventReporter,
@@ -151,8 +151,8 @@ internal abstract class BaseSheetViewModel<TransitionTargetType>(
         savedStateHandle.getLiveData<SavedSelection>(SAVE_SAVED_SELECTION)
     private val savedSelection: LiveData<SavedSelection> = _savedSelection
 
-    private val _transition = MutableLiveData<Event<TransitionTargetType?>>(Event(null))
-    internal val transition: LiveData<Event<TransitionTargetType?>> = _transition
+    private val _transition = MutableLiveData<Event<TransitionTarget?>>(Event(null))
+    internal val transition: LiveData<Event<TransitionTarget?>> = _transition
 
     @VisibleForTesting
     internal val _liveMode
@@ -343,8 +343,28 @@ internal abstract class BaseSheetViewModel<TransitionTargetType>(
 
     abstract fun transitionToFirstScreen()
 
-    fun transitionTo(target: TransitionTargetType) {
+    protected fun transitionTo(target: TransitionTarget) {
         _transition.postValue(Event(target))
+    }
+
+    fun transitionToAddPaymentScreen() {
+        transitionTo(TransitionTarget.AddPaymentMethodFull)
+    }
+
+    fun transitionToSavedPaymentMethods() {
+        transitionTo(TransitionTarget.SelectSavedPaymentMethod)
+    }
+
+    internal sealed class TransitionTarget {
+
+        // User has saved PM's and is selected
+        object SelectSavedPaymentMethod : TransitionTarget()
+
+        // User has saved PM's and is adding a new one
+        object AddPaymentMethodFull : TransitionTarget()
+
+        // User has no saved PM's
+        object AddPaymentMethodSheet : TransitionTarget()
     }
 
     @VisibleForTesting(otherwise = VisibleForTesting.PROTECTED)

@@ -99,7 +99,7 @@ internal class PaymentSheetViewModel @Inject internal constructor(
     @InjectorKey injectorKey: String,
     savedStateHandle: SavedStateHandle,
     linkLauncher: LinkPaymentLauncher
-) : BaseSheetViewModel<PaymentSheetViewModel.TransitionTarget>(
+) : BaseSheetViewModel(
     application = application,
     config = args.config,
     eventReporter = eventReporter,
@@ -598,18 +598,6 @@ internal class PaymentSheetViewModel @Inject internal constructor(
             TransitionTarget.SelectSavedPaymentMethod
         }
         transitionTo(target)
-    }
-
-    internal sealed class TransitionTarget {
-
-        // User has saved PM's and is selected
-        object SelectSavedPaymentMethod : TransitionTarget()
-
-        // User has saved PM's and is adding a new one
-        object AddPaymentMethodFull : TransitionTarget()
-
-        // User has no saved PM's
-        object AddPaymentMethodSheet : TransitionTarget()
     }
 
     internal class Factory(
