@@ -322,6 +322,11 @@ internal abstract class BaseSheetViewModel<TransitionTargetType>(
         Event(it)
     }
 
+    val isReady: LiveData<Event<Boolean>> = fragmentConfigEvent.map {
+        val config = it.getContentIfNotHandled()
+        Event(config != null)
+    }
+
     private fun createFragmentConfig(): FragmentConfig? {
         val stripeIntentValue = stripeIntent.value
         val isGooglePayReadyValue = isGooglePayReady.value
@@ -349,6 +354,8 @@ internal abstract class BaseSheetViewModel<TransitionTargetType>(
             null
         }
     }
+
+    abstract fun transitionToFirstScreen()
 
     fun transitionTo(target: TransitionTargetType) {
         _transition.postValue(Event(target))
