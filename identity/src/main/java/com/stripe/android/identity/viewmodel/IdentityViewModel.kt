@@ -1,9 +1,11 @@
 package com.stripe.android.identity.viewmodel
 
+import android.app.Application
 import android.graphics.Bitmap
 import android.net.Uri
 import android.util.Log
 import androidx.annotation.VisibleForTesting
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MediatorLiveData
@@ -14,6 +16,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.CreationExtras
+import androidx.navigation.NavController
 import com.stripe.android.camera.framework.image.longerEdge
 import com.stripe.android.core.exception.APIConnectionException
 import com.stripe.android.core.exception.APIException
@@ -32,6 +35,13 @@ import com.stripe.android.identity.ml.BoundingBox
 import com.stripe.android.identity.ml.FaceDetectorAnalyzer
 import com.stripe.android.identity.ml.FaceDetectorOutput
 import com.stripe.android.identity.ml.IDDetectorOutput
+import com.stripe.android.identity.navigation.ConsentDestination
+import com.stripe.android.identity.navigation.DocSelectionDestination
+import com.stripe.android.identity.navigation.SelfieDestination
+import com.stripe.android.identity.navigation.navigateTo
+import com.stripe.android.identity.navigation.navigateToErrorScreenWithDefaultValues
+import com.stripe.android.identity.navigation.navigateToErrorScreenWithRequirementError
+import com.stripe.android.identity.navigation.routeToScreenName
 import com.stripe.android.identity.networking.IdentityModelFetcher
 import com.stripe.android.identity.networking.IdentityRepository
 import com.stripe.android.identity.networking.Resource
@@ -49,6 +59,12 @@ import com.stripe.android.identity.networking.models.DocumentUploadParam.UploadM
 import com.stripe.android.identity.networking.models.Requirement
 import com.stripe.android.identity.networking.models.VerificationPage
 import com.stripe.android.identity.networking.models.VerificationPageData
+import com.stripe.android.identity.networking.models.VerificationPageData.Companion.hasError
+import com.stripe.android.identity.networking.models.VerificationPageData.Companion.isMissingBack
+import com.stripe.android.identity.networking.models.VerificationPageData.Companion.isMissingConsent
+import com.stripe.android.identity.networking.models.VerificationPageData.Companion.isMissingDocType
+import com.stripe.android.identity.networking.models.VerificationPageData.Companion.isMissingFront
+import com.stripe.android.identity.networking.models.VerificationPageData.Companion.isMissingSelfie
 import com.stripe.android.identity.networking.models.VerificationPageStaticContentDocumentCapturePage
 import com.stripe.android.identity.networking.models.VerificationPageStaticContentSelfieCapturePage
 import com.stripe.android.identity.states.FaceDetectorTransitioner
@@ -69,6 +85,7 @@ import kotlin.coroutines.CoroutineContext
  * ViewModel hosted by IdentityActivity, shared across fragments.
  */
 internal class IdentityViewModel constructor(
+    application: Application,
     internal val verificationArgs: IdentityVerificationSheetContract.Args,
     private val identityRepository: IdentityRepository,
     private val identityModelFetcher: IdentityModelFetcher,
@@ -79,7 +96,7 @@ internal class IdentityViewModel constructor(
     private val savedStateHandle: SavedStateHandle,
     @UIContext internal val uiContext: CoroutineContext,
     @IOContext internal val workContext: CoroutineContext
-) : ViewModel() {
+) : AndroidViewModel(application) {
 
     /**
      * StateFlow to track the upload status of high/low resolution image for front of document.
@@ -775,13 +792,13 @@ internal class IdentityViewModel constructor(
                             "sessionID: ${verificationArgs.verificationSessionId} and ephemeralKey: " +
                                 verificationArgs.ephemeralKeySecret
                             ).let { msg ->
-                            _verificationPage.postValue(
-                                Resource.error(
-                                    msg,
-                                    IllegalStateException(msg, it)
+                                _verificationPage.postValue(
+                                    Resource.error(
+                                        msg,
+                                        IllegalStateException(msg, it)
+                                    )
                                 )
-                            )
-                        }
+                            }
                 }
             )
         }
@@ -813,6 +830,9 @@ internal class IdentityViewModel constructor(
 
     /**
      * Post collected [CollectedDataParam] to update [VerificationPageData].
+     *
+     * TODO(ccen) remove this method when all Fragment extensions migrate to
+     * [postVerificationPageDataAndMaybeNavigate]
      */
     @Throws(
         APIConnectionException::class,
@@ -871,6 +891,74 @@ internal class IdentityViewModel constructor(
                 Resource.success(DUMMY_RESOURCE)
             }
             return it
+        }
+    }
+
+    /**
+     * Sends a POST request to VerificationPageData, navigate or invoke the callbacks based on result.
+     */
+    fun postVerificationPageDataAndMaybeNavigate(
+        navController: NavController,
+        collectedDataParam: CollectedDataParam,
+        fromRoute: String,
+        onMissingFront: () -> Unit = {},
+        onMissingBack: () -> Unit = {},
+        onReadyToSubmit: () -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            screenTracker.screenTransitionStart(
+                fromRoute.routeToScreenName()
+            )
+            verificationPageData.updateStateAndSave {
+                Resource.loading()
+            }
+            runCatching {
+                identityRepository.postVerificationPageData(
+                    verificationArgs.verificationSessionId,
+                    verificationArgs.ephemeralKeySecret,
+                    collectedDataParam,
+                    calculateClearDataParam(collectedDataParam)
+                )
+            }.onSuccess { newVerificationPageData ->
+                verificationPageData.updateStateAndSave {
+                    Resource.success(DUMMY_RESOURCE)
+                }
+                _collectedData.updateStateAndSave { oldValue ->
+                    oldValue.mergeWith(collectedDataParam)
+                }
+                _missingRequirements.updateStateAndSave {
+                    requireNotNull(newVerificationPageData.requirements.missings) {
+                        "VerificationPageDataRequirements.missings is null"
+                    }
+                }
+
+                if (newVerificationPageData.hasError()) {
+                    newVerificationPageData.requirements.errors[0].let { requirementError ->
+                        errorCause.postValue(
+                            IllegalStateException("VerificationPageDataRequirementError: $requirementError")
+                        )
+                        navController.navigateToErrorScreenWithRequirementError(
+                            fromRoute,
+                            requirementError,
+                        )
+                    }
+                } else if (newVerificationPageData.isMissingConsent()) {
+                    navController.navigateTo(ConsentDestination)
+                } else if (newVerificationPageData.isMissingDocType()) {
+                    navController.navigateTo(DocSelectionDestination)
+                } else if (newVerificationPageData.isMissingFront()) {
+                    onMissingFront()
+                } else if (newVerificationPageData.isMissingBack()) {
+                    onMissingBack()
+                } else if (newVerificationPageData.isMissingSelfie()) {
+                    navController.navigateTo(SelfieDestination)
+                } else {
+                    onReadyToSubmit()
+                }
+            }.onFailure { cause ->
+                errorCause.postValue(cause)
+                navController.navigateToErrorScreenWithDefaultValues(getApplication())
+            }
         }
     }
 
@@ -953,6 +1041,7 @@ internal class IdentityViewModel constructor(
     }
 
     internal class IdentityViewModelFactory(
+        private val applicationSupplier: () -> Application,
         private val uiContextSupplier: () -> CoroutineContext,
         private val workContextSupplier: () -> CoroutineContext,
         private val subcomponentSupplier: () -> IdentityActivitySubcomponent
@@ -964,6 +1053,7 @@ internal class IdentityViewModel constructor(
             val savedStateHandle = extras.createSavedStateHandle()
 
             return IdentityViewModel(
+                applicationSupplier(),
                 subcomponent.verificationArgs,
                 subcomponent.identityRepository,
                 subcomponent.identityModelFetcher,

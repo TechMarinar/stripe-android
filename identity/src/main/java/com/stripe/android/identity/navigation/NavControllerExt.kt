@@ -34,12 +34,45 @@ internal fun NavController.navigateToErrorScreenWithRequirementError(
     )
 }
 
+internal fun NavController.navigateToErrorScreenWithRequirementError(
+    route: String,
+    requirementError: VerificationPageDataRequirementError,
+) {
+    navigateTo(
+        ErrorDestination(
+            errorTitle = requirementError.title ?: context.getString(R.string.error),
+            errorContent = requirementError.body
+                ?: context.getString(R.string.unexpected_error_try_again),
+            backButtonText = requirementError.backButtonText ?: context.getString(R.string.go_back),
+            backButtonDestination =
+            if (requirementError.requirement.matchesFromRoute(route)) {
+                route
+            } else {
+                UNEXPECTED_ROUTE
+            },
+            shouldFail = false
+        )
+    )
+}
+
 internal fun NavController.navigateToErrorScreenWithDefaultValues(
     context: Context,
     cause: Throwable,
     identityViewModel: IdentityViewModel
 ) {
     identityViewModel.errorCause.postValue(cause)
+    navigateTo(
+        ErrorDestination(
+            errorTitle = context.getString(R.string.error),
+            errorContent = context.getString(R.string.unexpected_error_try_again),
+            backButtonDestination = ConsentDestination.ROUTE.route,
+            backButtonText = context.getString(R.string.go_back),
+            shouldFail = false
+        )
+    )
+}
+
+internal fun NavController.navigateToErrorScreenWithDefaultValues(context: Context) {
     navigateTo(
         ErrorDestination(
             errorTitle = context.getString(R.string.error),
@@ -62,6 +95,19 @@ internal fun NavController.navigateToErrorScreenWithFailedReason(
     identityViewModel: IdentityViewModel
 ) {
     identityViewModel.errorCause.postValue(failedReason)
+    navigateTo(
+        ErrorDestination(
+            errorTitle = context.getString(R.string.error),
+            errorContent = context.getString(R.string.unexpected_error_try_again),
+            backButtonText = context.getString(R.string.go_back),
+            shouldFail = true
+        )
+    )
+}
+
+internal fun NavController.navigateToErrorScreenWithFailedReason(
+    context: Context
+) {
     navigateTo(
         ErrorDestination(
             errorTitle = context.getString(R.string.error),
